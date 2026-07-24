@@ -1,4 +1,4 @@
-name: Build RSDKv4 for PortMaster
+name: Build Sonic 2 RSDKv4 for PortMaster
 
 on:
   push:
@@ -17,30 +17,25 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Configure Native Multi-Arch Repositories
+    - name: Configure Native Multi-Arch Repositories (DEB822 Format)
       run: |
-        # 1. Enable ARM64 architecture support on the host system
         sudo dpkg --add-architecture arm64
-
-        # 2. Re-route default repositories to handle both x86_64 and arm64 architectures safely
-        sudo sed -i 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list.d/* || true
-        sudo sed -i 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list || true
-
-        # 3. Append the official Ubuntu Ports mirror mapped specifically for arm64 packages
-        # (Matches the specific OS version running on the host image automatically)
+        if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+          sudo sed -i 's/Architectures: amd64/Architectures: amd64/g' /etc/apt/sources.list.d/ubuntu.sources
+          sudo sed -i '/^Types: deb/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+        fi
         CODENAME=$(lsb_release -sc)
-        echo "deb [arch=arm64] http://ubuntu.com ${CODENAME} main universe restricted multiverse" | sudo tee -a /etc/apt/sources.list
-        echo "deb [arch=arm64] http://ubuntu.com ${CODENAME}-updates main universe restricted multiverse" | sudo tee -a /etc/apt/sources.list
+        echo -e "Types: deb\nURIs: http://ubuntu.com\nSuites: ${CODENAME} ${CODENAME}-updates ${CODENAME}-security\nComponents: main universe restricted multiverse\nArchitectures: arm64\n" | sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources
 
     - name: Install Toolchains and ARM64 Dependencies
       run: |
         sudo apt-get update
-        # Install the cross-compilers along with native ARM64 development packages
         sudo apt-get install -y \
           gcc-aarch64-linux-gnu \
           g++-aarch64-linux-gnu \
           cmake \
           pkg-config \
+          zip \
           libsdl2-dev:arm64 \
           libvorbis-dev:arm64 \
           libogg-dev:arm64 \
@@ -48,7 +43,6 @@ jobs:
 
     - name: Configure CMake
       run: |
-        # Cross-build configurations utilizing standard system search trees via Pkg-Config
         cmake -B build \
           -DCMAKE_SYSTEM_NAME=Linux \
           -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
@@ -66,8 +60,45 @@ jobs:
       run: |
         cmake --build build --config Release -j$(nproc)
 
-    - name: Upload Binary Artifact
+    - name: Structure PortMaster Distribution
+      run: |
+        # Create standard layout structure
+        mkdir -p dist/ports/sonic2
+        
+        # Move the compiled engine binary into the subdirectory
+        cp build/RSDKv4 dist/ports/sonic2/
+        
+        # Generate the standard PortMaster launch script
+        cat << 'EOF' > dist/ports/Sonic2.sh
+        #!/bin/bash
+        
+        XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+        GAMEDIR="/roms/ports/sonic2"
+        cd "$GAMEDIR"
+        
+        # Redirect standard output streams to debug files
+        exec > >(tee "$GAMEDIR/log.txt") 2>&1
+        
+        # Bind controller schemes
+        [[ -f /control.txt ]] && source /control.txt
+        control_setup
+        
+        # Run Sonic 2
+        ./RSDKv4
+        
+        # Cleanly restart the system interface on termination
+        systemctl restart emulationstation || systemctl restart essway.service || killall -q frontend.sh
+        EOF
+        
+        chmod +x dist/ports/Sonic2.sh
+
+    - name: Compress Port Package Archive
+      run: |
+        cd dist
+        zip -r ../Sonic2-PortMaster-ARM64.zip ports/
+
+    - name: Upload Complete Release Bundle
       uses: actions/upload-artifact@v4
       with:
-        name: RSDKv4-PortMaster-ARM64
-        path: build/RSDKv4
+        name: Sonic2-PortMaster-ARM64-Bundle
+        path: Sonic2-PortMaster-ARM64.zip
