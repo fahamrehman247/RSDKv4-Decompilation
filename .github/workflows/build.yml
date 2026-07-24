@@ -9,8 +9,8 @@ on:
 
 jobs:
   build-arm64:
-    # Use GitHub's native ARM64 Ubuntu runner to eliminate repo resolution errors
-    runs-on: ubuntu-24.04-arm64
+    # Uses the instant-start, standard GitHub runners to avoid waiting in long queues
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Code
@@ -18,20 +18,38 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Native ARM64 Dependencies
+    - name: Install Toolchain Packages
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake pkg-config \
-                               libsdl2-dev libogg-dev libvorbis-dev
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake pkg-config
+
+    - name: Configure Cross-Build Environment
+      run: |
+        # Download and inject pre-compiled ARM64 development assets for SDL2 and vorbis dependencies
+        mkdir -p sysroot/usr/lib/aarch64-linux-gnu sysroot/usr/include
+        
+        # Pull clean binaries straight from Ubuntu's primary ports archive
+        wget http://ubuntu.com || wget http://ubuntu.com
+        wget http://ubuntu.com
+        wget http://ubuntu.com
+        
+        # Unpack them locally into our isolated workspace directory structure
+        for f in *.deb; do dpkg-deb -x "$f" sysroot/; done
 
     - name: Configure CMake
       run: |
         cmake -B build \
+          -DCMAKE_SYSTEM_NAME=Linux \
+          -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+          -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+          -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
           -DCMAKE_BUILD_TYPE=Release \
           -DRETRO_REVISION=3 \
           -DRETRO_USE_HW_RENDER=OFF \
           -DRETRO_DISABLE_PLUS=OFF \
-          -DCMAKE_EXE_LINKER_FLAGS="-pthread"
+          -DCMAKE_EXE_LINKER_FLAGS="-pthread -L${GITHUB_WORKSPACE}/sysroot/usr/lib/aarch64-linux-gnu" \
+          -DCMAKE_CXX_FLAGS="-I${GITHUB_WORKSPACE}/sysroot/usr/include" \
+          -DCMAKE_C_FLAGS="-I${GITHUB_WORKSPACE}/sysroot/usr/include"
 
     - name: Build Project
       run: |
